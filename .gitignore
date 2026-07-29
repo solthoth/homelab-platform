@@ -1,0 +1,8 @@
+# Hyper-V cluster-setup.ps1 runtime output
+infrastructure/hyper-v/logs/
+infrastructure/hyper-v/state/
+
+# Large binaries that don't belong in git
+*.vhdx
+*.vhd
+*.iso

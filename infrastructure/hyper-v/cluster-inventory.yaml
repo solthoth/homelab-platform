@@ -1,0 +1,39 @@
+apiVersion: homelab/v1
+kind: ClusterInventory
+
+cluster:
+  name: iolaus-prod
+  talosVersion: v1.13.3
+  kubernetesVersion: v1.36.1
+  endpoint: https://10.20.10.11:6443
+
+hyperv:
+  vmPath: D:\Hyper-V\iolaus-prod
+  switch: k8s-external
+  generation: 2
+  secureBoot: false
+  dynamicMemory: false
+  automaticCheckpoints: false
+  automaticStopAction: ShutDown
+  macAddressSpoofing: true
+  hostReserveGB: 14
+  isoPath: D:\Hyper-V\iso\talos-v1.13.3-metal-amd64.iso
+
+defaults:
+  controlplane:
+    cpu: 4
+    memoryGB: 8
+    disks:
+      - { name: os, sizeGB: 64, type: Dynamic }
+  worker:
+    cpu: 8
+    memoryGB: 14
+    disks:
+      - { name: os, sizeGB: 64, type: Dynamic }
+      - { name: longhorn, sizeGB: 250, type: Dynamic }
+
+nodes:
+  - { name: iolaus-cp-01, role: controlplane, address: 10.20.10.11, macAddress: "00-15-5D-20-10-11" }
+  - { name: iolaus-worker-01, role: worker, address: 10.20.10.21, macAddress: "00-15-5D-20-10-21" }
+  - { name: iolaus-worker-02, role: worker, address: 10.20.10.22, macAddress: "00-15-5D-20-10-22" }
+  - { name: iolaus-worker-03, role: worker, address: 10.20.10.23, macAddress: "00-15-5D-20-10-23" }
