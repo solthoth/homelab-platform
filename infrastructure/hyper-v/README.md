@@ -21,10 +21,16 @@ That's 28 vCPU (overcommit is fine), 50 GB RAM allocated, leaving ~14 GB for Win
 
 1. Hyper-V feature enabled (`Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All`, reboot).
 2. `powershell-yaml` module: `Install-Module -Name powershell-yaml -Scope CurrentUser -Force`.
-3. An external vSwitch matching `hyperv.switch` in the inventory. The script deliberately will not create this for you — creating an external switch can briefly drop host networking:
+3. A vSwitch matching `hyperv.switch` in the inventory. `cluster-setup.ps1` deliberately will not create this for you — creating or changing a vSwitch can briefly drop host networking. Run [switch-setup.ps1](switch-setup.ps1) once, first:
    ```powershell
-   New-VMSwitch -Name k8s-external -NetAdapterName '<your physical NIC name>' -AllowManagementOS $true
+   # Host has a spare, physically-connected NIC:
+   .\switch-setup.ps1 -Mode External -NetAdapterName '<your physical NIC name>'
+
+   # Host has no spare physical NIC (e.g. a laptop/NUC on Wi-Fi only) --
+   # Hyper-V External switches generally can't bind reliably to Wi-Fi adapters:
+   .\switch-setup.ps1 -Mode Internal
    ```
+   `-Mode Internal` sets up a host-only switch with NAT (gateway inferred from the first node's address in the inventory, e.g. `10.20.10.1/24`, or pass `-GatewayAddress`/`-PrefixLength` explicitly) so VMs get outbound connectivity through whatever uplink the host has. It gets you NAT but **no DHCP** — see the static-networking note below, required either way since this repo doesn't set up DHCP reservations. The script is idempotent and safe to re-run: it only touches the switch/NAT/gateway state that doesn't already match, and migrates any attached VMs before removing an old switch rather than assuming that'll just work.
 4. The Talos metal ISO downloaded to the path in `hyperv.isoPath`.
 5. Run PowerShell as Administrator — the script requires it.
 
@@ -41,16 +47,47 @@ That's 28 vCPU (overcommit is fine), 50 GB RAM allocated, leaving ~14 GB for Win
 .\cluster-setup.ps1
 ```
 
-Each node boots to Talos maintenance mode on first start (disk is empty, firmware falls through to the attached ISO). From there, cluster bring-up is a normal `talosctl` flow reading the same inventory for addresses/roles:
+Each node boots to Talos maintenance mode on first start (disk is empty, firmware falls through to the attached ISO). From there, cluster bring-up is automated by [talos-bootstrap.ps1](talos-bootstrap.ps1):
 
 ```powershell
-talosctl gen config iolaus-prod https://10.20.10.11:6443 --output-dir ./talosconfig
-talosctl apply-config --insecure -n 10.20.10.11 -e 10.20.10.11 --file ./talosconfig/controlplane.yaml
-talosctl apply-config --insecure -n 10.20.10.21 -e 10.20.10.21 --file ./talosconfig/worker.yaml
-# ...repeat apply-config for the other workers, then:
-talosctl bootstrap -n 10.20.10.11 -e 10.20.10.11
-talosctl kubeconfig -n 10.20.10.11 -e 10.20.10.11
+.\talos-bootstrap.ps1
 ```
+
+This generates the machine configs (pinned to `cluster.kubernetesVersion`), applies each node's config, bootstraps etcd, and pulls kubeconfig into `talosconfig/kubeconfig`. It's idempotent and safe to re-run — a node already reachable at its static inventory address is left alone, and etcd bootstrap/kubeconfig fetch are skipped if already done. Useful flags:
+
+- `-TalosctlPath <path>` if `talosctl` isn't on `PATH`.
+- `-Force` regenerates `controlplane.yaml`/`worker.yaml` even if they already exist (e.g. after bumping `cluster.kubernetesVersion`). Refuses to run if any node is already live and reachable unless you also pass `-AllowRegenerate` — regenerating resets the cluster's PKI, which breaks trust with every already-configured node.
+- `-SkipBootstrap` applies node configs only, without touching etcd bootstrap or kubeconfig — useful when adding a single new node to an already-bootstrapped cluster.
+- `-GatewayAddress`/`-PrefixLength`/`-Nameservers` override the static-network values it patches into each node's config (see below); by default the gateway is inferred from the first node's address, same convention as `switch-setup.ps1`.
+
+Like `switch-setup.ps1`, this is a separate, manually-invoked script — never run from `cluster-setup.ps1`'s scheduled task, since an unattended job should never hold the power to reconfigure a live cluster.
+
+### Why this needs a bootstrap dance at all
+
+`talosctl gen config` emits `network: {}` (DHCP) by default. Since `hyperv.switch` has no DHCP server behind it (true for the Internal+NAT setup above, and true for an External switch unless you've set up reservations), a maintenance-mode node given that config as-is would get no usable IPv4 at all — `apply-config` against the inventory address would then fail with `dial tcp <ip>:50000: i/o timeout`, because nothing is listening there yet. `talos-bootstrap.ps1` avoids this by patching a static `machine.network` block into each node's config *before* ever applying it:
+
+```yaml
+machine:
+  network:
+    interfaces:
+      - interface: enx<mac, no separators, lowercase>
+        addresses:
+          - 10.20.10.11/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 10.20.10.1
+    nameservers:
+      - 1.1.1.1
+      - 8.8.8.8
+```
+
+(Recent Talos also moved the hostname out into its own `HostnameConfig` document further down the same file — the script sets `hostname:` there, not inside `machine.network`; setting it in both makes `apply-config` reject the file with "static hostname is already set".)
+
+Two things make this fiddly, which is why it's scripted rather than left as a copy-pasted command sequence:
+- **The Hyper-V synthetic NIC's Linux interface name is `enx<mac>`, not `eth0`** (e.g. MAC `00-15-5D-20-10-11` → `enx00155d201011`). A `machine.network.interfaces` entry for `eth0` silently matches nothing and the node falls back to DHCP with no error.
+- **You need *some* reachable address to push that very first config to.** Link-local IPv6 (visible from the host via `Get-NetNeighbor` once the VM is up) is reachable by ping, but `talosctl`'s gRPC client can't dial a zone-scoped (`%zone`) IPv6 target — this is a client bug, not a config issue, and upgrading `talosctl` doesn't fix it. The script's workaround: temporarily reconnect the VM's network adapter to Hyper-V's built-in "Default Switch" (working NAT+DHCP out of the box), apply the config (with the static block above already patched in) against whatever DHCP address it gets there, then reconnect the VM back to the real cluster switch once `apply-config` reports success. The node comes up on the new switch already using its static inventory address.
+
+Always use a `talosctl` build matching `cluster.talosVersion`, not whatever an old chocolatey/apt package happens to have cached — the script warns if the client version doesn't match but doesn't block on it.
 
 ## Running on an interval
 
@@ -74,7 +111,7 @@ Every difference between the inventory and live Hyper-V state is classified:
 Two things are absolute, not flag-gated:
 
 - **Disk shrink is never applied automatically**, under any flag. Shrinking a VHDX safely means shrinking the guest partition first — that's a manual, guest-aware procedure, and it's the one operation where getting it wrong loses data (including live Longhorn volumes). If `state/drift-report.json` reports a `Disk:*:Shrink` item, shrink the filesystem inside the guest, then run `Resize-VHD -Path <vhdx> -SizeBytes <n>GB` by hand.
-- **The script never creates or modifies the vSwitch.** A missing switch is a hard error with the `New-VMSwitch` command to run yourself.
+- **The script never creates or modifies the vSwitch.** A missing switch is a hard error pointing at `switch-setup.ps1` (see Prerequisites above) — that script is also never invoked automatically, including by the scheduled task.
 
 `-AllowDisruptive` processes one node at a time — stop, apply, start, wait for heartbeat — before moving to the next, so a control-plane and all three workers are never down simultaneously from a single invocation. Note the heartbeat check is VM-level (Hyper-V integration service), not Kubernetes node-readiness — after a disruptive change to a control-plane node in particular, confirm with `kubectl get nodes` before considering the cluster healthy again.
 

@@ -1,6 +1,7 @@
 # Hyper-V cluster-setup.ps1 runtime output
 infrastructure/hyper-v/logs/
 infrastructure/hyper-v/state/
+talosconfig/
 
 # Large binaries that don't belong in git
 *.vhdx

@@ -2,9 +2,11 @@
     Creates and reconciles the Hyper-V VMs described in cluster-inventory.yaml.
 
     Scope: Hyper-V VM lifecycle only. It does not generate or apply Talos machine
-    configs, bootstrap etcd, or touch Kubernetes -- that is a separate talosctl
-    step reading the same inventory file. See README.md for the full workflow
-    and the drift-handling rules this script follows.
+    configs, bootstrap etcd, or touch Kubernetes -- that's talos-bootstrap.ps1,
+    a separate script reading the same inventory file, run after this one. It
+    also never creates or changes the vSwitch -- run switch-setup.ps1 for that,
+    once, before the first run here. See README.md for the full workflow and
+    the drift-handling rules this script follows.
 #>
 
 #Requires -RunAsAdministrator
@@ -160,7 +162,7 @@ function Test-ClusterInventory {
 function Test-ClusterSwitch {
     param([Parameter(Mandatory)][string]$SwitchName)
     if (-not (Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue)) {
-        throw "Hyper-V switch '$SwitchName' does not exist. Creating an external switch can briefly drop host networking, so this script will not do it for you. Create it manually first, e.g.:`n  New-VMSwitch -Name '$SwitchName' -NetAdapterName '<your physical NIC name>' -AllowManagementOS `$true"
+        throw "Hyper-V switch '$SwitchName' does not exist. Creating or changing a vSwitch can briefly drop host networking, so this script will not do it for you. Run switch-setup.ps1 first, e.g.:`n  .\switch-setup.ps1 -Mode External -NetAdapterName '<your physical NIC name>'`n  .\switch-setup.ps1 -Mode Internal   # if the host has no spare physical NIC (e.g. Wi-Fi only)`nSee README.md for details."
     }
 }
 
@@ -304,7 +306,11 @@ function Get-NodeDrift {
     if ($timeSync.Enabled) {
         $items += New-DriftItem $Node.Name Hot 'TimeSyncIntegration' 'Disabled' 'Enabled'
     }
-    $bootDiskFirst = $firmware.BootOrder.Count -gt 0 -and $firmware.BootOrder[0] -is [Microsoft.HyperV.PowerShell.HardDiskDrive]
+    # BootOrder entries are VMBootSource wrapper objects, not the drive itself --
+    # the actual HardDiskDrive/DvdDrive lives on .Device. Checking the wrapper's
+    # type here always evaluates false, so this used to report BootOrder as
+    # drifted forever regardless of the real order.
+    $bootDiskFirst = $firmware.BootOrder.Count -gt 0 -and $firmware.BootOrder[0].Device -is [Microsoft.HyperV.PowerShell.HardDiskDrive]
     if (-not $bootDiskFirst) {
         $items += New-DriftItem $Node.Name Hot 'BootOrder' 'Disk,DVD' 'DVD,Disk'
     }

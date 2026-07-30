@@ -8,7 +8,7 @@ cluster:
   endpoint: https://10.20.10.11:6443
 
 hyperv:
-  vmPath: D:\Hyper-V\iolaus-prod
+  vmPath: E:\Hyper-V\iolaus-prod
   switch: k8s-external
   generation: 2
   secureBoot: false
@@ -16,24 +16,26 @@ hyperv:
   automaticCheckpoints: false
   automaticStopAction: ShutDown
   macAddressSpoofing: true
-  hostReserveGB: 14
-  isoPath: D:\Hyper-V\iso\talos-v1.13.7-metal-amd64.iso
+  hostReserveGB: 8
+  isoPath: E:\Hyper-V\iso\talos-v1.13.7-metal-amd64.iso
 
 defaults:
   controlplane:
     cpu: 4
-    memoryGB: 8
+    memoryGB: 4
     disks:
       - { name: os, sizeGB: 64, type: Dynamic }
   worker:
     cpu: 8
-    memoryGB: 14
+    memoryGB: 8
     disks:
       - { name: os, sizeGB: 64, type: Dynamic }
       - { name: longhorn, sizeGB: 250, type: Dynamic }
 
 nodes:
   - { name: iolaus-cp-01, role: controlplane, address: 10.20.10.11, macAddress: "00-15-5D-20-10-11" }
+  # - { name: iolaus-cp-02, role: controlplane, address: 10.20.10.12, macAddress: "00-15-5D-20-10-12" }
+  # - { name: iolaus-cp-03, role: controlplane, address: 10.20.10.13, macAddress: "00-15-5D-20-10-13" }
   - { name: iolaus-worker-01, role: worker, address: 10.20.10.21, macAddress: "00-15-5D-20-10-21" }
   - { name: iolaus-worker-02, role: worker, address: 10.20.10.22, macAddress: "00-15-5D-20-10-22" }
-  - { name: iolaus-worker-03, role: worker, address: 10.20.10.23, macAddress: "00-15-5D-20-10-23" }
+  # - { name: iolaus-worker-03, role: worker, address: 10.20.10.23, macAddress: "00-15-5D-20-10-23" }
