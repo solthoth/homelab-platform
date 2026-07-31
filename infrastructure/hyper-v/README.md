@@ -62,6 +62,8 @@ This generates the machine configs (pinned to `cluster.kubernetesVersion`), appl
 
 Like `switch-setup.ps1`, this is a separate, manually-invoked script — never run from `cluster-setup.ps1`'s scheduled task, since an unattended job should never hold the power to reconfigure a live cluster.
 
+This script also disables Talos's default CNI and kube-proxy (`cluster.network.cni.name: none`, `cluster.proxy.disabled: true`) — Cilium replaces both. That means every node comes up **NotReady** until Cilium is installed, which the health-check warning at the end of a run says explicitly; this is expected, not a failure. Continue in [kubernetes/README.md](../../kubernetes/README.md) for the Cilium/ArgoCD bootstrap.
+
 ### Why this needs a bootstrap dance at all
 
 `talosctl gen config` emits `network: {}` (DHCP) by default. Since `hyperv.switch` has no DHCP server behind it (true for the Internal+NAT setup above, and true for an External switch unless you've set up reservations), a maintenance-mode node given that config as-is would get no usable IPv4 at all — `apply-config` against the inventory address would then fail with `dial tcp <ip>:50000: i/o timeout`, because nothing is listening there yet. `talos-bootstrap.ps1` avoids this by patching a static `machine.network` block into each node's config *before* ever applying it:

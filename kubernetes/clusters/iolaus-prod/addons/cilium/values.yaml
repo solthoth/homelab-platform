@@ -1,0 +1,33 @@
+# Full kube-proxy replacement. k8sServiceHost/Port point at Talos's KubePrism
+# (a local API-server proxy on every node's localhost:7445) instead of the
+# control-plane IP directly, so this keeps working across CP changes/HA later.
+kubeProxyReplacement: true
+k8sServiceHost: localhost
+k8sServicePort: 7445
+
+ipam:
+  mode: kubernetes
+
+# Talos uses cgroup v2 and mounts it itself -- Cilium must not try to mount
+# its own, or it'll fight Talos for the mount point.
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+# Talos blocks CAP_SYS_MODULE and CAP_SYS_BOOT for every container, even
+# privileged ones (it's an immutable OS -- no dynamic kernel modules, no
+# in-container reboot). Cilium's chart defaults request them anyway, which
+# fails init containers with "unable to apply caps: operation not permitted".
+# These lists are the chart defaults minus those two.
+securityContext:
+  capabilities:
+    ciliumAgent: [CHOWN, KILL, NET_ADMIN, NET_RAW, IPC_LOCK, SYS_ADMIN, SYS_RESOURCE, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    enabled: true

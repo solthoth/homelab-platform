@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium
+  namespace: argocd
+spec:
+  project: default
+  # Native Helm source, not Kustomize's helmCharts: inflation -- this is
+  # ArgoCD's direct analog of Flux's HelmRelease (chart pulled straight from
+  # the upstream repo at sync time, nothing vendored into this git repo).
+  # The values file still lives here in git; ArgoCD's "multiple sources"
+  # feature pulls it in via the $values placeholder below.
+  sources:
+    - repoURL: https://helm.cilium.io/
+      chart: cilium
+      targetRevision: 1.19.6
+      helm:
+        valueFiles:
+          - $values/kubernetes/clusters/iolaus-prod/addons/cilium/values.yaml
+    - repoURL: https://github.com/solthoth/homelab-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Matches the manual bootstrap command (helm template | kubectl apply
+      # --server-side) so ArgoCD's first sync is a clean field-manager
+      # handoff, not a diff against a stale last-applied-configuration
+      # annotation -- and avoids "metadata.annotations: Too long" on
+      # Cilium's large CRDs.
+      - ServerSideApply=true
+      - CreateNamespace=true

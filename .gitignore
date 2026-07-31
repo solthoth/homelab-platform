@@ -7,3 +7,8 @@ talosconfig/
 *.vhdx
 *.vhd
 *.iso
+
+# Kustomize's helmCharts: field pulls the chart source into charts/<name>-<version>/
+# next to the kustomization.yaml to render it, and doesn't clean up afterward --
+# fully regenerable from kustomization.yaml's helmCharts: reference + version pin.
+kubernetes/**/charts/

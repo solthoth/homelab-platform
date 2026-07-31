@@ -1,0 +1,14 @@
+configs:
+  cm:
+    # Required: the repo-server's own Kustomize builds disable Helm-chart
+    # inflation by default. Without this, ArgoCD can't render addons/cilium
+    # (or this argocd/ base itself, if it's ever re-applied via ArgoCD later).
+    kustomize.buildOptions: "--enable-helm"
+  params:
+    server.insecure: true
+
+# No ingress/LoadBalancer layer yet -- access via:
+#   kubectl -n argocd port-forward svc/argocd-server 8080:443
+server:
+  service:
+    type: ClusterIP

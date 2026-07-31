@@ -180,6 +180,27 @@ function Set-TalosNodeConfig {
     ($yamlParts -join "---`n") | Set-Content -Path $OutputPath -Encoding utf8
 }
 
+function Set-TalosClusterCniConfig {
+    # Patches cluster.network.cni.name=none and cluster.proxy.disabled=true so
+    # Talos never installs its default flannel CNI or kube-proxy -- Cilium
+    # replaces both (see kubernetes/README.md). Unlike Set-TalosNodeConfig,
+    # this is cluster-wide and identical on every node, so it patches the
+    # shared template in place, once per template, not once per node.
+    param([Parameter(Mandatory)][string]$TemplatePath)
+
+    $docs = ConvertFrom-Yaml -Yaml (Get-Content -Path $TemplatePath -Raw) -AllDocuments -Ordered
+
+    if (-not $docs[0].Contains('cluster')) {
+        throw "No top-level 'cluster' key in $TemplatePath -- talosctl's generated config format may have changed."
+    }
+    if (-not $docs[0].cluster.Contains('network')) { $docs[0].cluster['network'] = [ordered]@{} }
+    $docs[0].cluster['network']['cni'] = [ordered]@{ name = 'none' }
+    $docs[0].cluster['proxy'] = [ordered]@{ disabled = $true }
+
+    $yamlParts = foreach ($doc in $docs) { ConvertTo-Yaml -Data $doc }
+    ($yamlParts -join "---`n") | Set-Content -Path $TemplatePath -Encoding utf8
+}
+
 # ---------------------------------------------------------------------------
 # Prerequisites and inventory
 # ---------------------------------------------------------------------------
@@ -237,6 +258,13 @@ if ($configsExist -and -not $Force) {
         '--kubernetes-version', $k8sVersion, '--output-dir', $OutputDir, '--force'
     ) | Out-Null
 }
+
+# Idempotent and unconditional (not gated on $configsExist/-Force): safe to
+# re-run, and guards a template generated before this existed. Cilium replaces
+# both the CNI and kube-proxy -- see kubernetes/README.md.
+Write-Log 'Ensuring cluster.network.cni=none and cluster.proxy.disabled=true (Cilium replaces both)...'
+Set-TalosClusterCniConfig -TemplatePath $controlplaneTemplate
+Set-TalosClusterCniConfig -TemplatePath $workerTemplate
 
 $bootstrapAlias = Get-SwitchHostInterfaceAlias -SwitchName $BootstrapSwitchName
 
@@ -313,7 +341,12 @@ $healthy = Invoke-Talosctl -Arguments @('--talosconfig', $talosconfigPath, '-n',
 if ($healthy) {
     Write-Log 'Cluster is healthy.'
 } else {
-    Write-Log 'Cluster health check did not complete in time -- check manually with talosctl health.' -Level Warning
+    Write-Log 'Cluster health check did not complete in time. This is EXPECTED on a freshly bootstrapped cluster: cluster.network.cni.name=none and kube-proxy is disabled by design (Cilium provides both), so every node stays NotReady until Cilium is installed. Continue with the Cilium/ArgoCD bootstrap in kubernetes/README.md, then re-run talosctl health or kubectl get nodes to confirm.' -Level Warning
+    $kubectl = Get-Command kubectl -ErrorAction SilentlyContinue
+    if ($kubectl) {
+        Write-Log 'Node status (expect NotReady until Cilium is installed):'
+        & kubectl --kubeconfig (Join-Path $OutputDir 'kubeconfig') get nodes 2>&1 | ForEach-Object { Write-Log $_ }
+    }
 }
 
 if ($failedNodes.Count -gt 0) { exit 1 }

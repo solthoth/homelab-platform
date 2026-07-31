@@ -1,0 +1,26 @@
+# The app-of-apps root. Applied once by hand (kubectl apply -f), never from
+# inside apps/ itself -- apps/ is only ever scanned by ArgoCD for children, so
+# keeping this file out of that tree is what avoids the root Application
+# managing/pruning itself.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/solthoth/homelab-platform.git
+    targetRevision: main
+    path: kubernetes/clusters/iolaus-prod/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
