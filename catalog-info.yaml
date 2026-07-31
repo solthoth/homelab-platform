@@ -1,0 +1,16 @@
+# Backstage catalog entity for this repo. Not consumed by anything yet --
+# Backstage itself isn't installed (see docs/roadmap.md) -- but TechDocs
+# needs an entity with this annotation to know where to find mkdocs.yml,
+# so this is here ready for whenever Backstage is registered against this repo.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: homelab-platform
+  description: Talos Linux based Kubernetes homelab (Hyper-V bootstrap, Cilium, ArgoCD GitOps)
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: infrastructure
+  lifecycle: experimental
+  # TODO: point at a real Backstage User/Group entity once org data exists.
+  owner: solthoth

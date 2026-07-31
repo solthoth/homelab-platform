@@ -1,0 +1,11 @@
+site_name: 'Homelab Platform'
+site_description: 'Talos Linux based Kubernetes homelab: Hyper-V bootstrap, Cilium, ArgoCD GitOps.'
+
+nav:
+  - Home: index.md
+  - Hyper-V Bootstrap: hyper-v-bootstrap.md
+  - Kubernetes & GitOps: kubernetes-gitops.md
+  - Roadmap: roadmap.md
+
+plugins:
+  - techdocs-core

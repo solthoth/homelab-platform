@@ -27,6 +27,10 @@ Key things to know:
 - **ArgoCD does not manage itself.** The root Application lives in `bootstrap/`, not `apps/`, specifically so `apps/` is only ever scanned for children — the community-recommended way to avoid a root Application pruning/deleting itself. ArgoCD's own upgrades stay a manual, imperative step for now.
 - Secrets (ArgoCD repo credentials) are still imperative/out-of-band — SOPS+Age isn't wired up yet.
 
+## Documentation (`docs/`)
+
+User-facing docs (not this file) live in `docs/`, built for Backstage's TechDocs plugin — `mkdocs.yml` and `catalog-info.yaml` at the repo root are the TechDocs plumbing (`backstage.io/techdocs-ref: dir:.`). It's a curated summary of the two layers above (`docs/index.md`, `hyper-v-bootstrap.md`, `kubernetes-gitops.md`, `roadmap.md`), written for a docs-site reader rather than mirroring the component READMEs verbatim — when either layer changes meaningfully, update both the component's own README *and* the relevant `docs/` page, since they serve different audiences and can drift.
+
 ## Purpose
 
 A Talos Linux based Kubernetes homelab. The intended software stack, per [README.md](README.md), is:
