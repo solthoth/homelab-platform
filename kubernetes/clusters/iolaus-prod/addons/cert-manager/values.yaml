@@ -1,0 +1,4 @@
+# Recent cert-manager charts gate CRD installation behind this flag instead
+# of a separate manifest / --include-crds.
+crds:
+  enabled: true

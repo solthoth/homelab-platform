@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-azuredns
+spec:
+  ingressClassName: cilium
+  tls:
+    - hosts:
+        - argocd.home.bitandbyteideas.com
+      secretName: argocd-server-tls
+  rules:
+    - host: argocd.home.bitandbyteideas.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  name: http   # targets 8080, same as "https" -- server.insecure: true means TLS terminates here, not at argocd-server

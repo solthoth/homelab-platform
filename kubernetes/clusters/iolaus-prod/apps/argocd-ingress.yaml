@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-ingress
+  namespace: argocd
+  annotations:
+    # Wave 2: needs both the shared ingress LB IP to exist (cilium-lb-pool,
+    # wave 1) and the ClusterIssuer to exist (cert-manager-issuer, wave 1).
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/solthoth/homelab-platform.git
+    targetRevision: main
+    path: kubernetes/clusters/iolaus-prod/addons/argocd-ingress
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

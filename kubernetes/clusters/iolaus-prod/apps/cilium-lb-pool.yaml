@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium-lb-pool
+  namespace: argocd
+  annotations:
+    # Wave 1: needs Cilium's CRDs (CiliumLoadBalancerIPPool,
+    # CiliumL2AnnouncementPolicy), installed by the "cilium" Application in
+    # wave 0, to already exist.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/solthoth/homelab-platform.git
+    targetRevision: main
+    path: kubernetes/clusters/iolaus-prod/addons/cilium-lb-pool
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

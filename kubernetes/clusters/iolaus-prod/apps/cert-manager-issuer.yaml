@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-issuer
+  namespace: argocd
+  annotations:
+    # Wave 1: needs cert-manager's CRDs (ClusterIssuer) and its webhook pod
+    # actually serving admission requests -- both are satisfied once the
+    # "cert-manager" Application (wave 0) reports Healthy, since that health
+    # aggregates the cert-manager/cainjector/webhook Deployments.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/solthoth/homelab-platform.git
+    targetRevision: main
+    path: kubernetes/clusters/iolaus-prod/addons/cert-manager-issuer
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

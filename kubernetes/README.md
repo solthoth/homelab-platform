@@ -19,7 +19,51 @@ clusters/iolaus-prod/
 
 `bootstrap/` holds only what must exist before any GitOps tooling can help (ArgoCD itself, and the single root Application that hands control to it) — it deliberately does not include Cilium. `apps/` and `addons/` are ArgoCD-managed from the moment `root-app.yaml` is applied.
 
-Adding a future addon (Longhorn, monitoring, etc.) is: `addons/<name>/values.yaml` (the chart's overrides), `apps/<name>.yaml` (an Application referencing the upstream chart + that values file, per `cilium.yaml`'s pattern), add it to `apps/kustomization.yaml`, commit. No manual `kubectl`/`helm` step required — the root Application picks up the new child on its next reconcile.
+Adding a future addon (Longhorn, monitoring, etc.) is: `addons/<name>/values.yaml` (the chart's overrides), `apps/<name>.yaml` (an Application referencing the upstream chart + that values file, per `cilium.yaml`'s pattern), add it to `apps/kustomization.yaml`, commit. No manual `kubectl`/`helm` step required — the root Application picks up the new child on its next reconcile. Exposing a new service on the LAN follows the same idea: its own `addons/<name>-ingress/` (an `Ingress` with `ingressClassName: cilium` and the `cert-manager.io/cluster-issuer` annotation, following `argocd-ingress`'s pattern) — no changes needed to the LB pool, L2 policy, `ClusterIssuer`, or the host-side bridge script.
+
+### Sync-wave ordering
+
+Some addons depend on another addon's CRDs already existing (`cilium-lb-pool` needs Cilium's CRDs; `cert-manager-issuer` needs cert-manager's CRDs *and* its webhook actually serving; `argocd-ingress` needs both the LB pool and the issuer). This is sequenced with `argocd.argoproj.io/sync-wave` annotations on the `Application` resources themselves — `cilium`/`cert-manager` at the default wave (`0`), `cilium-lb-pool`/`cert-manager-issuer` at `1`, `argocd-ingress` at `2`. ArgoCD only advances to the next wave once every `Application` in the current one is both `Synced` and `Healthy`.
+
+**This requires one non-obvious fix**, already applied in `bootstrap/argocd/values.yaml`: ArgoCD removed built-in health assessment of its own `argoproj.io/Application` CRD in v1.8+. Without restoring it via a `resource.customizations.health.argoproj.io_Application` Lua script in `configs.cm`, sync-waves would still create things in the right order, but wouldn't actually *wait* for the previous wave to be healthy first — a later addon could get applied before its dependency's CRDs exist, and just sit retrying instead of being avoided cleanly.
+
+## Exposing services to the home LAN
+
+The Hyper-V vSwitch (`k8s-external`) is an **Internal** switch + Windows NAT — the host has no spare physical NIC for an External switch bridged onto the LAN. That has real consequences for exposing anything:
+
+- The cluster's `10.20.10.0/24` network is its own L2 segment. The host is *on* it (it's the NAT gateway), but no other LAN device is. A `CiliumLoadBalancerIPPool` (`addons/cilium-lb-pool/ippool.yaml`) only allocates an IP at the Kubernetes API level — nothing answers ARP for it without **Cilium L2 Announcements** (`l2announcements.enabled: true` in `addons/cilium/values.yaml`, activated by `addons/cilium-lb-pool/l2announcement-policy.yaml`) also enabled. That's what makes the shared ingress IP reachable from the host at all, which every other LAN device's path depends on.
+- Cilium's Ingress Controller runs in **shared** mode (`ingressController.loadbalancerMode: shared` in `addons/cilium/values.yaml`) — one LoadBalancer Service (`cilium-ingress` in `kube-system`) backs every `Ingress` resource cluster-wide, so exposing a second service later needs no new LB IP.
+- **cert-manager** + a `ClusterIssuer` (`addons/cert-manager-issuer/clusterissuer.yaml`) get real, trusted, auto-renewing certificates from Let's Encrypt via **DNS-01 through Azure DNS** — this only needs Azure DNS API access to create a TXT record; the domain's actual A/CNAME record never needs to be internet-reachable, since LAN clients resolve it separately (see the runbook below).
+- [infrastructure/hyper-v/lan-ingress-bridge.ps1](../infrastructure/hyper-v/lan-ingress-bridge.ps1) forwards the host's LAN-facing port 443 to whatever IP the shared ingress currently has (discovered live via `kubectl`, never hardcoded) — this is the actual bridge from the rest of the home network into the cluster.
+
+### One-time setup runbook
+
+Do this after `cilium`/`cert-manager` (wave 0) and `cilium-lb-pool`/`cert-manager-issuer` (wave 1) have synced:
+
+1. **Azure Service Principal**, scoped to only the DNS zone:
+   ```bash
+   ZONE_ID=$(az network dns zone show --resource-group <rg> --name <your-domain> --query id -o tsv)
+   az ad sp create-for-rbac --name cert-manager-dns01 --role "DNS Zone Contributor" --scopes "$ZONE_ID"
+   az account show --query id -o tsv   # subscriptionID
+   ```
+2. **Create the credential Secret** (imperative, out-of-band — same pattern as ArgoCD's own repo credentials; SOPS+Age isn't wired up yet):
+   ```powershell
+   kubectl create secret generic azuredns-config -n cert-manager --from-literal=client-secret='<appSecret from step 1>'
+   ```
+3. **Fill in the remaining placeholders** (not secret, safe to commit) in `addons/cert-manager-issuer/clusterissuer.yaml` — `clientID`, `subscriptionID`, `tenantID`, `resourceGroupName` (the domain/`hostedZoneName` and the Ingress hostname are already set), then push.
+4. Wait for wave 2 (`argocd-ingress`); watch `kubectl -n argocd get certificate argocd-server-tls -w` until `READY=True`.
+5. **DHCP reservation** on the home router for the host's Wi-Fi MAC (`Get-NetAdapter -Name Wi-Fi | Select-Object MacAddress`) against its current LAN IP, so it never changes.
+6. **Local DNS** for the hostname → that reserved IP: a router/Pi-hole/AdGuard local DNS rewrite if available (covers every device type); otherwise a per-PC `hosts` file entry as a fallback.
+7. Run the bridge script:
+   ```powershell
+   cd infrastructure\hyper-v
+   .\lan-ingress-bridge.ps1 -WhatIf   # preview first
+   .\lan-ingress-bridge.ps1
+   ```
+
+Steps 1–3 can happen any time after wave 1 syncs, and must land before step 4's certificate can go `Ready` — cert-manager just retries DNS-01 until the secret/issuer are correct, that's not a sync-wave concern. Steps 5–7 are independent of the Kubernetes side.
+
+Verify end-to-end from an **actual other LAN device** (not the host — that's the whole point): `https://<hostname>/` should load with a trusted padlock and no browser warning.
 
 ## Why Cilium has no `bootstrap/` entry
 
@@ -90,6 +134,5 @@ No ingress/LoadBalancer exists yet, so reach the ArgoCD UI/API via port-forward:
 
 ## Not yet handled here
 
-- **Secrets**: ArgoCD's repo credentials (step 4) are an imperative, out-of-band step — SOPS+Age isn't wired up yet, so nothing about repo access is committed to git.
-- **Exposing services beyond the cluster network**: no MetalLB/ingress layer yet. Cilium can potentially provide its own L2/BGP LoadBalancer IPAM, worth evaluating instead of a separate MetalLB addon when this is designed.
+- **Secrets**: ArgoCD's repo credentials, and the Azure DNS Service Principal's client secret (see "Exposing services to the home LAN" above), are both imperative, out-of-band steps — SOPS+Age isn't wired up yet, so neither is committed to git.
 - **ArgoCD self-management, Longhorn, monitoring**: future layers, not designed here — see "Layout" above for how they'd slot in.

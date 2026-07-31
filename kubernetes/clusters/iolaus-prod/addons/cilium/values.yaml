@@ -31,3 +31,22 @@ hubble:
     enabled: true
   ui:
     enabled: true
+
+# Shared-mode Ingress: one LoadBalancer Service ("cilium-ingress" in kube-system)
+# backs every Ingress resource cluster-wide, so a future addon just adds its
+# own Ingress object -- no new LB IP/pool/L2 policy needed per service.
+ingressController:
+  enabled: true
+  loadbalancerMode: shared
+  default: true      # IngressClass "cilium" becomes the cluster default
+  enforceHttps: true # redirect plain-HTTP hits to HTTPS
+
+# LB-IPAM is enabled by default but only allocates an IP at the Kubernetes API
+# level -- nothing answers ARP for it on the k8s-external L2 segment without
+# this. The Windows host sits on that segment (it's the NAT gateway), so this
+# is what makes the shared-ingress IP reachable from the host at all -- see
+# addons/cilium-lb-pool/ for the pool + policy, and
+# infrastructure/hyper-v/lan-ingress-bridge.ps1 for bridging it to the rest of
+# the home LAN.
+l2announcements:
+  enabled: true

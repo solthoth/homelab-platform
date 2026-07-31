@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  # Wave 0 (default): independent of everything else in this plan, just
+  # needs its own CRDs + webhook up before cert-manager-issuer (wave 1) relies
+  # on them.
+spec:
+  project: default
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      targetRevision: v1.21.1
+      helm:
+        valueFiles:
+          - $values/kubernetes/clusters/iolaus-prod/addons/cert-manager/values.yaml
+    - repoURL: https://github.com/solthoth/homelab-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # cert-manager's CRDs are large enough to risk "metadata.annotations:
+      # Too long" under client-side apply, same reason as cilium.yaml.
+      - ServerSideApply=true
+      - CreateNamespace=true

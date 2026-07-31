@@ -1,0 +1,13 @@
+# Makes one node at a time ARP-reply for LoadBalancer-type Service IPs (i.e.
+# addresses handed out by lan-ingress-pool) on the node's NIC. Talos/Hyper-V
+# synthetic NICs are named enx<mac> (see talos-bootstrap.ps1), never eth0 --
+# ^enx.* matches every current and future node regardless of MAC.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: lan-ingress-l2-policy
+spec:
+  interfaces:
+    - ^enx.*
+  externalIPs: false
+  loadBalancerIPs: true

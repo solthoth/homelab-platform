@@ -1,0 +1,10 @@
+# Range picked to avoid node IPs (.11/.21/.22) and the NAT gateway (.1),
+# leaving room to grow toward .239 if more nodes are added later.
+apiVersion: cilium.io/v2
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: lan-ingress-pool
+spec:
+  blocks:
+    - start: 10.20.10.240
+      stop: 10.20.10.250

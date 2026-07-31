@@ -4,11 +4,31 @@ configs:
     # inflation by default. Without this, ArgoCD can't render addons/cilium
     # (or this argocd/ base itself, if it's ever re-applied via ArgoCD later).
     kustomize.buildOptions: "--enable-helm"
+    # Required for app-of-apps sync-waves to actually gate on each other:
+    # ArgoCD removed built-in health assessment of its own Application CRD in
+    # v1.8+. Without this, a later-wave Application (e.g. cert-manager-issuer)
+    # would still get created in the right order, but wouldn't wait for an
+    # earlier-wave Application (e.g. cert-manager) to actually be Healthy
+    # first -- CRD-not-found errors would just get silently retried instead.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil then
+        if obj.status.health ~= nil then
+          hs.status = obj.status.health.status
+          if obj.status.health.message ~= nil then
+            hs.message = obj.status.health.message
+          end
+        end
+      end
+      return hs
   params:
     server.insecure: true
 
-# No ingress/LoadBalancer layer yet -- access via:
-#   kubectl -n argocd port-forward svc/argocd-server 8080:443
+# argocd-server itself stays ClusterIP -- addons/argocd-ingress/ routes to it
+# via the shared Cilium ingress (see kubernetes/README.md), not a dedicated
+# LoadBalancer here.
 server:
   service:
     type: ClusterIP

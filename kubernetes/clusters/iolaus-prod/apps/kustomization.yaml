@@ -3,3 +3,7 @@ kind: Kustomization
 
 resources:
   - cilium.yaml
+  - cilium-lb-pool.yaml
+  - cert-manager.yaml
+  - cert-manager-issuer.yaml
+  - argocd-ingress.yaml
