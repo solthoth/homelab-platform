@@ -3,3 +3,6 @@ kind: Kustomization
 
 resources:
   - clusterissuer.yaml
+
+generators:
+  - azuredns-config.secret-generator.yaml

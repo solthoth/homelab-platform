@@ -25,7 +25,7 @@ Key things to know:
 - **ArgoCD-managed addons use ArgoCD's native Helm source, not Kustomize.** `apps/cilium.yaml` uses `spec.sources` with `chart:`/`targetRevision:` against the upstream Helm repo plus this git repo (via `ref: values`) for `addons/cilium/values.yaml` — the direct analog of Flux's `HelmRelease`, nothing about the chart is vendored into this repo. Kustomize's `helmCharts:` field is reserved for `bootstrap/argocd` (ArgoCD's own one-time, non-ArgoCD-managed install, applied by a human via `kustomize build --enable-helm`) or a future addon that genuinely needs plain-manifest patches layered on a chart's output — not used reflexively everywhere a Helm chart is involved. `kustomize build --enable-helm`/`kubectl apply -k` don't support the same thing (`-k` doesn't do Helm inflation at all); both `kustomize` and `helm` need to be on `PATH`.
 - **Three-way directory split** under `kubernetes/clusters/iolaus-prod/`: `bootstrap/` (one-time, manually-applied — ArgoCD's own install and the app-of-apps root Application; never watched by an Application), `apps/` (ArgoCD Application CRs — "what should exist"), `addons/` (each addon's `values.yaml` — "how to configure it"). Cilium has no `bootstrap/` entry: the manual first install (`helm template` + `kubectl apply --server-side`) and the ArgoCD-managed install render the exact same chart version + values file, so there's no drift for ArgoCD to reconcile on first sync.
 - **ArgoCD does not manage itself.** The root Application lives in `bootstrap/`, not `apps/`, specifically so `apps/` is only ever scanned for children — the community-recommended way to avoid a root Application pruning/deleting itself. ArgoCD's own upgrades stay a manual, imperative step for now.
-- Secrets (ArgoCD repo credentials) are still imperative/out-of-band — SOPS+Age isn't wired up yet.
+- **SOPS + Age is wired up**: KSOPS in `bootstrap/argocd/values.yaml`'s `repoServer` block lets ArgoCD decrypt `*.enc.yaml` Secrets at sync time — see `kubernetes/README.md`'s "Secrets (SOPS + Age)" section before touching any Secret in this repo. ArgoCD's own repo credentials are the one exception that stays imperative/out-of-band (bootstrapping ArgoCD's access to the repo it'd need to read `.sops.yaml` from is a chicken-and-egg problem).
 
 ## Documentation (`docs/`)
 
@@ -50,4 +50,4 @@ A Talos Linux based Kubernetes homelab. The intended software stack, per [README
 | Logging | Loki |
 | Dashboards | Grafana |
 
-Cilium and ArgoCD have landed (see `kubernetes/` above). Crossplane/Atlantis, Backstage, Longhorn, SOPS+Age, and the monitoring/logging stack have not — as each lands, update this file the same way the Kubernetes/GitOps section above was added.
+Cilium, ArgoCD, and SOPS+Age have landed (see `kubernetes/` above). Crossplane/Atlantis, Backstage, Longhorn, and the monitoring/logging stack have not — as each lands, update this file the same way the Kubernetes/GitOps section above was added.

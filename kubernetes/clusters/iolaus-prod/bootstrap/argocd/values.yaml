@@ -1,9 +1,13 @@
 configs:
   cm:
-    # Required: the repo-server's own Kustomize builds disable Helm-chart
+    # --enable-helm: the repo-server's own Kustomize builds disable Helm-chart
     # inflation by default. Without this, ArgoCD can't render addons/cilium
     # (or this argocd/ base itself, if it's ever re-applied via ArgoCD later).
-    kustomize.buildOptions: "--enable-helm"
+    # --enable-alpha-plugins --enable-exec: required for KSOPS (see repoServer
+    # below and kubernetes/README.md's "Secrets (SOPS + Age)" section) --
+    # KSOPS is a Kustomize exec plugin, disabled by default for the same
+    # reason Helm inflation is.
+    kustomize.buildOptions: "--enable-helm --enable-alpha-plugins --enable-exec"
     # Required for app-of-apps sync-waves to actually gate on each other:
     # ArgoCD removed built-in health assessment of its own Application CRD in
     # v1.8+. Without this, a later-wave Application (e.g. cert-manager-issuer)
@@ -32,3 +36,45 @@ configs:
 server:
   service:
     type: ClusterIP
+
+# Wires KSOPS (viaduct-ai/kustomize-sops) into the repo-server so ArgoCD can
+# transparently decrypt SOPS+Age-encrypted Secrets at sync time -- see
+# kubernetes/README.md's "Secrets (SOPS + Age)" section for the full runbook.
+# The sops-age Secret referenced below is created imperatively, out-of-band,
+# before this file is ever applied -- it's the root of trust the whole
+# mechanism depends on, and can never itself be SOPS-encrypted in this same
+# repo without a bootstrapping paradox.
+repoServer:
+  volumes:
+    - name: custom-tools
+      emptyDir: {}
+    - name: sops-age
+      secret:
+        secretName: sops-age
+
+  initContainers:
+    - name: install-ksops
+      image: viaductoss/ksops:v4.5.1
+      command: ["/usr/local/bin/ksops", "install", "--with-kustomize", "/custom-tools"]
+      volumeMounts:
+        - name: custom-tools
+          mountPath: /custom-tools
+
+  volumeMounts:
+    # Deliberately overwrites the chart's bundled kustomize with the version
+    # KSOPS was built/tested against -- this is the officially documented
+    # pattern, not a mistake.
+    - name: custom-tools
+      subPath: kustomize
+      mountPath: /usr/local/bin/kustomize
+    - name: custom-tools
+      subPath: ksops
+      mountPath: /usr/local/bin/ksops
+    - name: sops-age
+      mountPath: /.config/sops/age
+
+  env:
+    - name: XDG_CONFIG_HOME
+      value: /.config
+    - name: SOPS_AGE_KEY_FILE
+      value: /.config/sops/age/keys.txt
