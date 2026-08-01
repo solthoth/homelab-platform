@@ -80,14 +80,48 @@ cd infrastructure\hyper-v
 .\k8s-api-bridge.ps1
 ```
 
-### Connecting from the remote host
+### Getting a kubeconfig onto the remote host
 
-Copy `infrastructure/hyper-v/talosconfig/kubeconfig` to the remote host, then edit its `server:` field to point at the Hyper-V host's LAN IP instead of the control-plane's internal address (`https://10.20.10.11:6443` → `https://192.168.1.170:6443`).
+`infrastructure/hyper-v/talosconfig/kubeconfig` (produced by `talos-bootstrap.ps1`) is **cluster-admin** and deliberately `.gitignore`d — like any live credential in this repo, it's never meant to travel through git, and handing out a copy of it to every device/person that needs `kubectl` access means an ever-growing set of holders of the one credential that can do anything, with no way to take back just one of them. Two ways to get a working kubeconfig onto a remote host, in order of preference:
+
+#### Preferred: a scoped, per-person/device credential (`new-cluster-user.ps1`)
+
+[infrastructure/hyper-v/new-cluster-user.ps1](../infrastructure/hyper-v/new-cluster-user.ps1) mints an individually-revocable credential using Kubernetes' own [CertificateSigningRequest API](https://kubernetes.io/docs/reference/access-authn-authz/certificate-signing-requests/) — no extra identity-provider infrastructure (OIDC/Dex/etc.) required, just the cluster's own CA, which Talos already wires kube-controller-manager up to sign with. Run **on the Hyper-V host** (or anywhere holding the admin kubeconfig):
+
+```powershell
+cd infrastructure\hyper-v
+.\new-cluster-user.ps1 -Username "carlos-macbook" -ClusterRole view
+```
+
+What it does, end to end:
+1. Generates an ECDSA P-256 keypair and a CSR (`CN=<Username>`) entirely in .NET — no `openssl`/`cfssl` needed.
+2. Submits it as a `CertificateSigningRequest` (`signerName: kubernetes.io/kube-apiserver-client`) and approves it — this signer is **not** auto-approved by Kubernetes by default, so this admin-approval step is the actual security boundary, not a formality.
+3. Reads back the certificate the cluster's own CA just signed.
+4. Applies a `ClusterRoleBinding` binding that exact `Username` to `-ClusterRole` (default `view`; pass `-ClusterRole cluster-admin` for full access) — idempotent, so re-running for the same `-Username` later (e.g. to reissue an expired cert) doesn't disturb anyone else's access.
+5. Assembles a ready-to-use kubeconfig pointed at the LAN-forwarded address from the section above, and writes it to `infrastructure/hyper-v/talosconfig/issued/<username>-kubeconfig` — inside `talosconfig/`, so it inherits the same `.gitignore` rule as the admin kubeconfig.
+
+The only step left manual — because it's inherent to bootstrapping trust with *any* new device, including OIDC/SSO — is getting that resulting file onto the person's machine. It's a much lower-stakes transfer than the admin kubeconfig, though: scoped to one role, revocable independently of everyone else, and (by default) expires in 90 days on its own. Still treat it as a live credential in transit — AirDrop, `scp`, a USB drive, or a temporary secure share, not email or chat.
+
+Once it's on the remote host, using it is identical to the admin kubeconfig — see "Using a kubeconfig on the remote host" below, just point `KUBECONFIG` at the issued file directly (its `server:`/CA data are already correct, no editing needed, unlike the admin kubeconfig below).
+
+**Revoking access** later: `.\revoke-cluster-user.ps1 -Username "carlos-macbook"`. Read the header comments in both scripts before relying on this for anything sensitive — **Kubernetes' native x509 client-cert auth has no certificate revocation list**, so this removes authorization (every API call immediately 403s) but the certificate itself stays cryptographically valid, and would still authenticate, until its `-ExpirationDays` runs out. That expiration window is the actual safety net, not the revoke script alone; keep it short for anyone/anything you're not fully confident in long-term. This is a known, general limitation of native Kubernetes client-cert auth (not something specific to this script) — it's exactly why clusters with more than a handful of users typically move to OIDC eventually.
+
+#### Fallback: the admin kubeconfig directly
+
+Useful for the Hyper-V host's own first remote-admin device, or in a pinch. Copy `infrastructure/hyper-v/talosconfig/kubeconfig` to the remote host, then edit its `server:` field to point at the Hyper-V host's LAN IP instead of the control-plane's internal address (`https://10.20.10.11:6443` → `https://192.168.1.170:6443`). There's no `scp`/network-share transfer built into this repo for it (it's cluster-admin — deliberately not something to automate the distribution of); use whichever of OpenSSH Server, an SMB share, or a USB drive/AirDrop you're comfortable with on your LAN.
+
+```bash
+# after getting the file onto the remote host by whatever means:
+sed -i '' 's/10\.20\.10\.11/192.168.1.170/' ~/.kube/homelab-admin-config   # macOS/BSD sed; drop the '' on GNU/Linux
+```
+```powershell
+(Get-Content $env:USERPROFILE\.kube\homelab-admin-config) -replace '10\.20\.10\.11', '192.168.1.170' | Set-Content $env:USERPROFILE\.kube\homelab-admin-config
+```
+
+### Using a kubeconfig on the remote host
 
 **Linux / macOS:**
 ```bash
-scp <windows-host>:/path/to/homelab-platform/infrastructure/hyper-v/talosconfig/kubeconfig ~/.kube/homelab-config
-sed -i '' 's/10\.20\.10\.11/192.168.1.170/' ~/.kube/homelab-config   # macOS/BSD sed; drop the '' on GNU/Linux
 export KUBECONFIG=~/.kube/homelab-config
 kubectl get nodes
 ```
@@ -95,15 +129,12 @@ To use it permanently instead of `~/.kube/config`, add the `export KUBECONFIG=..
 
 **Windows (PowerShell):**
 ```powershell
-# From the Hyper-V host, or via a file share/USB/etc:
-Copy-Item \\<windows-host>\...\talosconfig\kubeconfig $env:USERPROFILE\.kube\homelab-config
-(Get-Content $env:USERPROFILE\.kube\homelab-config) -replace '10\.20\.10\.11', '192.168.1.170' | Set-Content $env:USERPROFILE\.kube\homelab-config
 $env:KUBECONFIG = "$env:USERPROFILE\.kube\homelab-config"
 kubectl get nodes
 ```
 To persist across sessions, set the `KUBECONFIG` environment variable via `[Environment]::SetEnvironmentVariable('KUBECONFIG', "$env:USERPROFILE\.kube\homelab-config", 'User')` instead of setting it per-session.
 
-Re-run `k8s-api-bridge.ps1` any time the Hyper-V host's LAN IP changes (e.g. a new DHCP lease) — it auto-detects the current one. If it changes, the cert SAN needs updating too (`talos-bootstrap.ps1 -ApiServerCertSANs <new-ip>`), or TLS verification breaks again even though the port forward still works.
+Re-run `k8s-api-bridge.ps1` any time the Hyper-V host's LAN IP changes (e.g. a new DHCP lease) — it auto-detects the current one. If it changes, the cert SAN needs updating too (`talos-bootstrap.ps1 -ApiServerCertSANs <new-ip>`), or TLS verification breaks again even though the port forward still works — and any kubeconfig already issued (admin or per-user) needs its `server:` field updated to match, since that address is baked in at issue time.
 
 ## Why Cilium has no `bootstrap/` entry
 
