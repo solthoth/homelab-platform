@@ -22,6 +22,6 @@ spec:
               key: client-secret
             subscriptionID: "0d84648f-60b2-4962-9d98-9ba0d9bebeb5"
             tenantID: "e0c906a3-b766-47db-afcc-c7f76a5cea7a"
-            resourceGroupName: "g-bit-and-byte-ideas-website-prod"
+            resourceGroupName: "rg-bit-and-byte-ideas-website-prod"
             hostedZoneName: "bitandbyteideas.com"
             environment: AzurePublicCloud
