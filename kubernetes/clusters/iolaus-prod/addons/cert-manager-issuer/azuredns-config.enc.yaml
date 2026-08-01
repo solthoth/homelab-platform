@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: azuredns-config
+    namespace: cert-manager
+type: Opaque
+stringData:
+    client-secret: ENC[AES256_GCM,data:p1oh7R2WDnDtc1jnKM0Z8NOkYVcJsgtvE/he0dfFO6MAh9vvfCWjsA==,iv:2uNsByS7RvNL8/xIBBuExjm4iCwSfdJQsAw0gVsuzJk=,tag:zw2hChDXMKgzopScwwIF/g==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBoMks5ZXJJNXBTSTVlaFlH
+            V3hJaUlybzlvNkNPU1BLblBYaHc2cnJJb3hnCmxueGI0c1k2TUgwM011SXh5cUhs
+            R3NSajhmSmNEZTFFS1dYa2JvK2xaYncKLS0tIHgyMXNOTXk2V1BYUWtZREhUUWJK
+            N25QZWFsZUs1WEQ4ZlF0TXNEcG9VV2sKY8UiVxdiIGAGmH/EbSPxjKmNWSwmIhGe
+            Yqr2D2VdGTcT9A9IBhVyCYAYu6dx0Df8rjN2wtyWrbcvVVw2sPDoFw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1uuw3lkwaay3mf7qq0rapwnc4yqw439ajj28w8ujde0hd7x5ssufs5fvmjy
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-01T03:37:34Z"
+    mac: ENC[AES256_GCM,data:elwBJ8vw/gkEp/+2hDlAGnQgArbnmh9voQ63csxoxiENM3l+Q4kobuxIQ9J40Jxw/kGfYTV83duWYOL5YCFXqVLft/aZrSsfphFeyVty0/bXfLA7900NFp8MI5yTsUf8+cO/rMQKYPzU4buJoYjeLc2DO9cGK+YbIO9tAaUu13I=,iv:2cJHZxolOPifMvRScbR/zue9UxmCvkyux2A/I4kpa/w=,tag:cHxJovqmB6ccLT0zjbFp9g==,type:str]
+    version: 3.13.3

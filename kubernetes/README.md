@@ -132,7 +132,53 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.pas
 
 No ingress/LoadBalancer exists yet, so reach the ArgoCD UI/API via port-forward: `kubectl -n argocd port-forward svc/argocd-server 8080:443`.
 
+## Secrets (SOPS + Age)
+
+Every Kubernetes Secret in this repo is authored as plaintext, SOPS-encrypted in place, and committed — never applied by hand. ArgoCD's repo-server decrypts them transparently at sync time via [KSOPS](https://github.com/viaduct-ai/kustomize-sops) (see `bootstrap/argocd/values.yaml`'s `repoServer` block: an init container installs the `ksops`/`kustomize` binaries, `kustomize.buildOptions` gains `--enable-alpha-plugins --enable-exec`, and the Age private key is mounted from a `sops-age` Secret), so from the cluster's perspective a SOPS-encrypted generator and a plain `Secret` resource are indistinguishable.
+
+**Adding a new one only ever needs the Age *public* key (already committed in `.sops.yaml`) and the `sops` CLI — never the private key.** Only *decrypting* an existing one (to view/edit it locally, or for ArgoCD's repo-server to render it at sync time) needs the private key, which never leaves this host outside of the `sops-age` Secret in the `argocd` namespace and a backup outside this repo (a password manager, not git).
+
+**Windows note:** `sops` doesn't auto-discover the Age key at its conventional default path on this OS — set `$env:SOPS_AGE_KEY_FILE` explicitly for any local `sops` command (e.g. in your PowerShell profile), or every local encrypt/decrypt fails with a confusing "no matching creation rules found" or "identity did not match any of the recipients" instead of a clear "key not found."
+
+To add `addons/<name>/<secret>.enc.yaml`:
+
+1. Author it as a normal plaintext Secret manifest, `stringData` for human-typed values, **already named with the `.enc.yaml` suffix** (SOPS's creation rules match on the filename you give it, not on where you redirect the output — encrypting a `plain.yaml` into a `secret.enc.yaml` via `>` doesn't match the rule):
+   ```yaml
+   apiVersion: v1
+   kind: Secret
+   metadata:
+     name: <secret>
+     namespace: <ns>
+   type: Opaque
+   stringData:
+     <key>: "<value>"
+   ```
+2. Encrypt in place: `sops --encrypt --in-place addons/<name>/<secret>.enc.yaml` (picks up the rule from the repo-root `.sops.yaml` automatically — nothing to pass on the command line).
+3. Point a generator at it in that addon's `kustomization.yaml` (`resources:` and `generators:` coexist fine in one file):
+   ```yaml
+   generators:
+     - <secret>.secret-generator.yaml
+   ```
+   with `<secret>.secret-generator.yaml`:
+   ```yaml
+   apiVersion: viaduct.ai/v1
+   kind: ksops
+   metadata:
+     name: <secret>-secret-generator
+     annotations:
+       config.kubernetes.io/function: |
+         exec:
+           path: ksops
+   files:
+     - ./<secret>.enc.yaml
+   ```
+4. Commit and push. ArgoCD picks it up on the addon's normal reconcile — no manual step, same as any other addon change.
+
+To *edit* an existing encrypted secret: `sops addons/<name>/<secret>.enc.yaml` opens it decrypted in `$EDITOR` and re-encrypts on save — this is the one operation that needs the private key.
+
+The Age private key lives only: on this host (`C:\Users\soldo\.config\sops\age\keys.txt`), backed up in a password manager, and inside the `sops-age` Secret in the `argocd` namespace (itself created imperatively, out-of-band — it's the one secret that can never be SOPS-encrypted in this same repo without a bootstrapping paradox). Losing all copies makes every SOPS-encrypted secret in this repo permanently unrecoverable; rotating the key means re-encrypting every `.enc.yaml` and replacing the `sops-age` Secret.
+
 ## Not yet handled here
 
-- **Secrets**: ArgoCD's repo credentials, and the Azure DNS Service Principal's client secret (see "Exposing services to the home LAN" above), are both imperative, out-of-band steps — SOPS+Age isn't wired up yet, so neither is committed to git.
+- **Secrets**: ArgoCD's own repo credentials are still an imperative, out-of-band step (SOPS+Age isn't a good fit for bootstrapping ArgoCD's own access to the repo it needs to read `.sops.yaml` from in the first place). The Azure DNS Service Principal's client secret, by contrast, is now SOPS-encrypted and committed — see "Secrets (SOPS + Age)" above.
 - **ArgoCD self-management, Longhorn, monitoring**: future layers, not designed here — see "Layout" above for how they'd slot in.

@@ -41,6 +41,14 @@ The one-time manual Cilium install (`helm template ... | kubectl apply --server-
 
 The app-of-apps root Application should never include or manage itself — doing so creates confusing self-referential prune/delete behavior. The root Application manifest lives in `bootstrap/`, not `apps/`, specifically so `apps/` is only ever scanned for *children*. ArgoCD's own install/upgrades stay a manual, imperative concern for now; self-management is worth revisiting once the app-of-apps pattern has proven out on real addons.
 
+## Exposing services to the home LAN
+
+The Hyper-V vSwitch is an Internal switch + Windows NAT, not bridged onto the physical LAN, so exposing anything needs a deliberate bridge: Cilium's Ingress Controller (shared mode — one LoadBalancer IP backs every exposed service) plus Cilium L2 Announcements (so that IP is actually ARP-reachable, starting with the host itself), cert-manager issuing trusted, auto-renewing certificates via Let's Encrypt DNS-01 through Azure DNS, and a host-side PowerShell script forwarding the host's LAN-facing port 443 into the cluster. ArgoCD itself was the first service exposed this way. See [Hyper-V Bootstrap](hyper-v-bootstrap.md) for the host-side half and `kubernetes/README.md` for the full runbook.
+
+## Secrets (SOPS + Age)
+
+Kubernetes Secrets in this repo are authored as plaintext, encrypted in place with [SOPS](https://github.com/getsops/sops) and an Age key, and committed — never applied by hand. ArgoCD's repo-server decrypts them transparently at sync time via [KSOPS](https://github.com/viaduct-ai/kustomize-sops), a Kustomize plugin wired into ArgoCD's own Helm values. Adding a new encrypted secret only ever needs the Age *public* key (committed in `.sops.yaml`) — the private key is only needed to decrypt an existing one, and never leaves the host it was generated on except as a Secret inside the cluster itself.
+
 ## Bootstrap sequence (summary)
 
 1. Bring up the cluster (Hyper-V + Talos) — every node comes up `NotReady`, expected, since there's no CNI yet.
@@ -54,6 +62,5 @@ From that point on, any change to `kubernetes/clusters/iolaus-prod/` on `main` i
 
 ## Not yet handled
 
-- **Secrets**: ArgoCD's repo credentials are still an imperative, out-of-band step — SOPS+Age isn't wired up yet, so nothing about repo access is committed to git.
-- **Exposing services beyond the cluster network**: no MetalLB/ingress layer yet. Cilium can potentially provide its own L2/BGP LoadBalancer IPAM, worth evaluating instead of a separate MetalLB addon when this is designed.
+- **Secrets**: ArgoCD's own repo credentials are still an imperative, out-of-band step (bootstrapping ArgoCD's access to the repo it needs to read `.sops.yaml` from in the first place is a chicken-and-egg problem SOPS+Age can't solve). Everything else is SOPS-encrypted and committed.
 - **ArgoCD self-management, Longhorn, monitoring**: see [Roadmap](roadmap.md).

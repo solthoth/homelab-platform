@@ -1,0 +1,12 @@
+creation_rules:
+  # No directory prefix in the regex -- sops matches against the path as
+  # passed on the command line, which uses backslashes on Windows, so a
+  # "kubernetes/..." prefix silently never matches there. The .enc.yaml
+  # suffix alone is a safe, unambiguous match for this repo's convention.
+  - path_regex: \.enc\.yaml$
+    # Allow-list: only data/stringData get encrypted, so the rest of a Secret
+    # manifest (name, namespace, type) stays readable in diffs. Safer than an
+    # unencrypted_regex deny-list against a future field neither form
+    # anticipated.
+    encrypted_regex: "^(data|stringData)$"
+    age: age1uuw3lkwaay3mf7qq0rapwnc4yqw439ajj28w8ujde0hd7x5ssufs5fvmjy

@@ -1,8 +1,8 @@
 # clientID/subscriptionID/tenantID/resourceGroupName are not secret and are
-# committed here -- REPLACE THE REMAINING PLACEHOLDERS below once the Azure
-# Service Principal exists. Only the Service Principal's client secret is
-# sensitive; it lives in the "azuredns-config" Secret created out-of-band
-# (see kubernetes/README.md), never committed to git.
+# committed here directly. Only the Service Principal's client secret is
+# sensitive -- it lives in azuredns-config.enc.yaml (SOPS-encrypted with Age,
+# decrypted by ArgoCD's repo-server via KSOPS at sync time; see
+# kubernetes/README.md's "Secrets (SOPS + Age)" section), not this file.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -16,12 +16,12 @@ spec:
     solvers:
       - dns01:
           azureDNS:
-            clientID: "<AZURE_SP_CLIENT_ID>"
+            clientID: "600a7b12-3443-4da3-93bf-cef77672a139"
             clientSecretSecretRef:
               name: azuredns-config
               key: client-secret
-            subscriptionID: "<AZURE_SUBSCRIPTION_ID>"
-            tenantID: "<AZURE_TENANT_ID>"
-            resourceGroupName: "<AZURE_DNS_RESOURCE_GROUP>"
+            subscriptionID: "0d84648f-60b2-4962-9d98-9ba0d9bebeb5"
+            tenantID: "e0c906a3-b766-47db-afcc-c7f76a5cea7a"
+            resourceGroupName: "g-bit-and-byte-ideas-website-prod"
             hostedZoneName: "bitandbyteideas.com"
             environment: AzurePublicCloud
