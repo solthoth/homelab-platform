@@ -59,6 +59,7 @@ This generates the machine configs (pinned to `cluster.kubernetesVersion`), appl
 - `-Force` regenerates `controlplane.yaml`/`worker.yaml` even if they already exist (e.g. after bumping `cluster.kubernetesVersion`). Refuses to run if any node is already live and reachable unless you also pass `-AllowRegenerate` — regenerating resets the cluster's PKI, which breaks trust with every already-configured node.
 - `-SkipBootstrap` applies node configs only, without touching etcd bootstrap or kubeconfig — useful when adding a single new node to an already-bootstrapped cluster.
 - `-GatewayAddress`/`-PrefixLength`/`-Nameservers` override the static-network values it patches into each node's config (see below); by default the gateway is inferred from the first node's address, same convention as `switch-setup.ps1`.
+- `-ApiServerCertSANs <ip[]>` adds extra SANs to the kube-apiserver's serving cert (`cluster.apiServer.certSANs`) — needed for `kubectl` to TLS-verify against any address besides the node's own static IP, e.g. a LAN IP reachable via a port-forward (see the remote-access section of [kubernetes/README.md](../../kubernetes/README.md)). Don't confuse this with `machine.certSANs`, a different field that only covers Talos's own apid/machined API on port 50000, not the Kubernetes API on 6443.
 
 Like `switch-setup.ps1`, this is a separate, manually-invoked script — never run from `cluster-setup.ps1`'s scheduled task, since an unattended job should never hold the power to reconfigure a live cluster.
 

@@ -3,6 +3,11 @@
     generate machine configs, apply a static-network patch to each node (this
     switch has no DHCP), bootstrap etcd, and pull kubeconfig.
 
+    Pass -ApiServerCertSANs to add extra SANs (e.g. a LAN IP reachable via a
+    port-forward) to the kube-apiserver's serving cert -- this is
+    cluster.apiServer.certSANs, not machine.certSANs (that field only covers
+    Talos's own apid/machined API on port 50000, not port 6443).
+
     Deliberately a separate, manually-invoked script -- never run from
     cluster-setup.ps1's scheduled task. It reads the same cluster-inventory.yaml
     but owns none of the Hyper-V VM lifecycle; cluster-setup.ps1 must already
@@ -26,6 +31,7 @@ param(
     [string]$GatewayAddress,
     [int]$PrefixLength = 24,
     [string[]]$Nameservers = @('1.1.1.1', '8.8.8.8'),
+    [string[]]$ApiServerCertSANs = @(),
     [switch]$Force,
     [switch]$AllowRegenerate,
     [switch]$SkipBootstrap,
@@ -180,6 +186,31 @@ function Set-TalosNodeConfig {
     ($yamlParts -join "---`n") | Set-Content -Path $OutputPath -Encoding utf8
 }
 
+function Set-TalosApiServerCertSans {
+    # Patches cluster.apiServer.certSANs -- this is the field that actually
+    # extends the kube-apiserver's serving cert (port 6443). machine.certSANs
+    # is a DIFFERENT field that only covers Talos's own apid/machined API
+    # (port 50000); patching it alone leaves kubectl over any extra address
+    # (e.g. a LAN IP reachable via a port-forward) failing TLS verification.
+    # Cluster-wide and only meaningful on the control-plane template -- kube-
+    # apiserver never runs on workers -- so patched once here, like
+    # Set-TalosClusterCniConfig, not per-node.
+    param([Parameter(Mandatory)][string]$TemplatePath, [Parameter(Mandatory)][string[]]$CertSANs)
+
+    $docs = ConvertFrom-Yaml -Yaml (Get-Content -Path $TemplatePath -Raw) -AllDocuments -Ordered
+
+    if (-not $docs[0].Contains('cluster')) {
+        throw "No top-level 'cluster' key in $TemplatePath -- talosctl's generated config format may have changed."
+    }
+    if (-not $docs[0].cluster.Contains('apiServer')) {
+        throw "No 'cluster.apiServer' key in $TemplatePath -- talosctl's generated config format may have changed."
+    }
+    $docs[0].cluster['apiServer']['certSANs'] = @($CertSANs)
+
+    $yamlParts = foreach ($doc in $docs) { ConvertTo-Yaml -Data $doc }
+    ($yamlParts -join "---`n") | Set-Content -Path $TemplatePath -Encoding utf8
+}
+
 function Set-TalosClusterCniConfig {
     # Patches cluster.network.cni.name=none and cluster.proxy.disabled=true so
     # Talos never installs its default flannel CNI or kube-proxy -- Cilium
@@ -265,6 +296,11 @@ if ($configsExist -and -not $Force) {
 Write-Log 'Ensuring cluster.network.cni=none and cluster.proxy.disabled=true (Cilium replaces both)...'
 Set-TalosClusterCniConfig -TemplatePath $controlplaneTemplate
 Set-TalosClusterCniConfig -TemplatePath $workerTemplate
+
+if ($ApiServerCertSANs.Count -gt 0) {
+    Write-Log "Ensuring cluster.apiServer.certSANs includes: $($ApiServerCertSANs -join ', ')..."
+    Set-TalosApiServerCertSans -TemplatePath $controlplaneTemplate -CertSANs $ApiServerCertSANs
+}
 
 $bootstrapAlias = Get-SwitchHostInterfaceAlias -SwitchName $BootstrapSwitchName
 

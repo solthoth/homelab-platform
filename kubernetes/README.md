@@ -65,6 +65,46 @@ Steps 1–3 can happen any time after wave 1 syncs, and must land before step 4'
 
 Verify end-to-end from an **actual other LAN device** (not the host — that's the whole point): `https://<hostname>/` should load with a trusted padlock and no browser warning.
 
+## Remote cluster access (kubectl from another host)
+
+The Kubernetes API (port 6443) has the same reachability problem as any other in-cluster service: `10.20.10.0/24` is its own L2 segment behind the Hyper-V host's NAT, so a device elsewhere on the LAN (a MacBook, say) can't reach `10.20.10.11:6443` directly. [infrastructure/hyper-v/k8s-api-bridge.ps1](../infrastructure/hyper-v/k8s-api-bridge.ps1) bridges it the same way `lan-ingress-bridge.ps1` bridges the ingress — a `netsh interface portproxy` forward from the host's LAN IP to the control-plane node's static address, plus a firewall rule scoped to the LAN's CIDR. Unlike the ingress bridge, the backend is the control-plane's static inventory address (read straight from `cluster-inventory.yaml`), not a dynamically-assigned LoadBalancer IP.
+
+TLS verification is the part that actually needs a real fix, not just a forwarded port: the API server's serving certificate only carries SANs for addresses Talos already knows about (`10.20.10.11`, `127.0.0.1`, the Kubernetes Service IP), not the Hyper-V host's LAN IP. That requires `cluster.apiServer.certSANs` — set via `talos-bootstrap.ps1 -ApiServerCertSANs <lan-ip>` (see [infrastructure/hyper-v/README.md](../infrastructure/hyper-v/README.md)). **Don't confuse this with `machine.certSANs`** — a different field entirely, covering only Talos's own apid/machined API on port 50000, not the Kubernetes API on 6443; setting the wrong one leaves `kubectl` failing TLS verification while `talosctl` works fine, which is a confusing place to debug from.
+
+### One-time setup (on the Hyper-V host)
+
+```powershell
+cd infrastructure\hyper-v
+# Only needed once, or again if the LAN IP changes: adds the LAN IP as a cert SAN.
+.\talos-bootstrap.ps1 -ApiServerCertSANs 192.168.1.170
+.\k8s-api-bridge.ps1
+```
+
+### Connecting from the remote host
+
+Copy `infrastructure/hyper-v/talosconfig/kubeconfig` to the remote host, then edit its `server:` field to point at the Hyper-V host's LAN IP instead of the control-plane's internal address (`https://10.20.10.11:6443` → `https://192.168.1.170:6443`).
+
+**Linux / macOS:**
+```bash
+scp <windows-host>:/path/to/homelab-platform/infrastructure/hyper-v/talosconfig/kubeconfig ~/.kube/homelab-config
+sed -i '' 's/10\.20\.10\.11/192.168.1.170/' ~/.kube/homelab-config   # macOS/BSD sed; drop the '' on GNU/Linux
+export KUBECONFIG=~/.kube/homelab-config
+kubectl get nodes
+```
+To use it permanently instead of `~/.kube/config`, add the `export KUBECONFIG=...` line to `~/.zshrc`/`~/.bashrc`, or merge it into `~/.kube/config` under a named context with `kubectl config` commands.
+
+**Windows (PowerShell):**
+```powershell
+# From the Hyper-V host, or via a file share/USB/etc:
+Copy-Item \\<windows-host>\...\talosconfig\kubeconfig $env:USERPROFILE\.kube\homelab-config
+(Get-Content $env:USERPROFILE\.kube\homelab-config) -replace '10\.20\.10\.11', '192.168.1.170' | Set-Content $env:USERPROFILE\.kube\homelab-config
+$env:KUBECONFIG = "$env:USERPROFILE\.kube\homelab-config"
+kubectl get nodes
+```
+To persist across sessions, set the `KUBECONFIG` environment variable via `[Environment]::SetEnvironmentVariable('KUBECONFIG', "$env:USERPROFILE\.kube\homelab-config", 'User')` instead of setting it per-session.
+
+Re-run `k8s-api-bridge.ps1` any time the Hyper-V host's LAN IP changes (e.g. a new DHCP lease) — it auto-detects the current one. If it changes, the cert SAN needs updating too (`talos-bootstrap.ps1 -ApiServerCertSANs <new-ip>`), or TLS verification breaks again even though the port forward still works.
+
 ## Why Cilium has no `bootstrap/` entry
 
 The one-time manual Cilium install (step 1 below) runs `helm template` against the exact same chart version + `addons/cilium/values.yaml` that `apps/cilium.yaml` later points ArgoCD at. There's one source of truth; "manually installed" and "ArgoCD-managed" render the same manifests, so ArgoCD's first sync is a clean no-op diff rather than something requiring special adoption handling.
